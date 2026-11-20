@@ -20,6 +20,9 @@ interface LibraryDao {
     @Query("SELECT * FROM library_entries WHERE deletedAtUtc IS NULL AND status = :status ORDER BY updatedAtUtc DESC")
     fun observeActiveEntriesByStatus(status: String): Flow<List<LibraryEntryEntity>>
 
+    @Query("SELECT * FROM library_entries WHERE id = :entryId AND deletedAtUtc IS NULL LIMIT 1")
+    fun observeEntryById(entryId: String): Flow<LibraryEntryEntity?>
+
     @Query("SELECT * FROM works WHERE deletedAtUtc IS NULL")
     fun observeActiveWorks(): Flow<List<WorkEntity>>
 
@@ -66,7 +69,7 @@ interface LibraryDao {
     suspend fun upsertProgress(progress: ReadingProgressEntity)
 
     @Transaction
-    suspend fun insertNewLibraryItem(
+    suspend fun upsertLibraryAggregate(
         work: WorkEntity,
         edition: EditionEntity,
         entry: LibraryEntryEntity,
@@ -82,6 +85,11 @@ interface LibraryDao {
         "UPDATE library_entries SET status = :status, updatedAtUtc = :updatedAtUtc, revision = revision + 1 WHERE id = :entryId AND deletedAtUtc IS NULL"
     )
     suspend fun updateEntryStatus(entryId: String, status: String, updatedAtUtc: String)
+
+    @Query(
+        "UPDATE library_entries SET favorite = :favorite, updatedAtUtc = :updatedAtUtc, revision = revision + 1 WHERE id = :entryId AND deletedAtUtc IS NULL"
+    )
+    suspend fun updateEntryFavorite(entryId: String, favorite: Boolean, updatedAtUtc: String)
 
     @Query(
         "UPDATE library_entries SET deletedAtUtc = :deletedAtUtc, updatedAtUtc = :deletedAtUtc, revision = revision + 1 WHERE id = :entryId AND deletedAtUtc IS NULL"

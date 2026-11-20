@@ -4,6 +4,7 @@ import dev.shiori.core.domain.model.LibraryItem
 import dev.shiori.core.domain.model.ProgressOrigin
 import dev.shiori.core.domain.model.ReadingModePreference
 import dev.shiori.core.domain.model.ReadingStatus
+import dev.shiori.core.domain.model.UpdateLibraryItemInput
 import dev.shiori.core.domain.model.WorkFormat
 import kotlinx.coroutines.flow.Flow
 
@@ -12,6 +13,8 @@ import kotlinx.coroutines.flow.Flow
  */
 interface LibraryRepository {
     fun observeLibrary(statusFilter: ReadingStatus? = null): Flow<List<LibraryItem>>
+
+    fun observeLibraryItem(entryId: String): Flow<LibraryItem?>
 
     suspend fun getLibraryItem(entryId: String): LibraryItem?
 
@@ -28,6 +31,10 @@ interface LibraryRepository {
         positionMarker: String? = null,
         sourceUrl: String? = null,
     ): LibraryItem
+
+    suspend fun updateEntryDetails(input: UpdateLibraryItemInput)
+
+    suspend fun toggleFavorite(entryId: String, favorite: Boolean)
 
     suspend fun updateProgress(
         editionId: String,

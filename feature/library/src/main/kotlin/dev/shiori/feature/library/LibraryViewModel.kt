@@ -3,44 +3,49 @@ package dev.shiori.feature.library
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.shiori.core.domain.model.LibraryFilter
+import dev.shiori.core.domain.model.LibraryFilterEngine
 import dev.shiori.core.domain.model.LibraryItem
 import dev.shiori.core.domain.model.ProgressOrigin
 import dev.shiori.core.domain.model.ReadingStatus
 import dev.shiori.core.domain.model.WorkFormat
 import dev.shiori.core.domain.repository.LibraryRepository
-import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 data class LibraryUiState(
     val items: List<LibraryItem> = emptyList(),
-    val selectedStatus: ReadingStatus? = null,
+    val filter: LibraryFilter = LibraryFilter(),
     val isAddDialogOpen: Boolean = false,
 )
 
-@OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
     private val repository: LibraryRepository,
 ) : ViewModel() {
 
-    private val selectedStatus = MutableStateFlow<ReadingStatus?>(null)
+    private val filterState = MutableStateFlow(LibraryFilter())
     private val isAddDialogOpen = MutableStateFlow(false)
 
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val messages: SharedFlow<String> = _messages.asSharedFlow()
+
     val uiState: StateFlow<LibraryUiState> = combine(
-        selectedStatus.flatMapLatest { filter -> repository.observeLibrary(filter) },
-        selectedStatus,
+        repository.observeLibrary(statusFilter = null),
+        filterState,
         isAddDialogOpen,
-    ) { items, filter, dialogOpen ->
+    ) { allItems, filter, dialogOpen ->
         LibraryUiState(
-            items = items,
-            selectedStatus = filter,
+            items = LibraryFilterEngine.apply(allItems, filter),
+            filter = filter,
             isAddDialogOpen = dialogOpen,
         )
     }.stateIn(
@@ -49,8 +54,20 @@ class LibraryViewModel @Inject constructor(
         initialValue = LibraryUiState(),
     )
 
+    fun updateSearchQuery(query: String) {
+        filterState.value = filterState.value.copy(query = query)
+    }
+
     fun selectStatusFilter(status: ReadingStatus?) {
-        selectedStatus.value = status
+        filterState.value = filterState.value.copy(status = status)
+    }
+
+    fun selectFormatFilter(format: WorkFormat?) {
+        filterState.value = filterState.value.copy(format = format)
+    }
+
+    fun toggleFavoritesOnly() {
+        filterState.value = filterState.value.copy(favoritesOnly = !filterState.value.favoritesOnly)
     }
 
     fun openAddDialog() {
@@ -66,6 +83,8 @@ class LibraryViewModel @Inject constructor(
         format: WorkFormat,
         initialChapter: Double,
         totalChapters: Int?,
+        positionMarker: String?,
+        sourceUrl: String?,
     ) {
         if (title.isBlank()) return
         viewModelScope.launch {
@@ -74,6 +93,8 @@ class LibraryViewModel @Inject constructor(
                 format = format,
                 totalChapters = totalChapters,
                 initialChapter = initialChapter,
+                positionMarker = positionMarker,
+                sourceUrl = sourceUrl,
             )
             isAddDialogOpen.value = false
         }
@@ -81,13 +102,36 @@ class LibraryViewModel @Inject constructor(
 
     fun incrementChapter(item: LibraryItem) {
         val current = item.progress?.chapterNumber ?: 0.0
-        val next = current + 1.0
         viewModelScope.launch {
             repository.updateProgress(
                 editionId = item.edition.id,
-                chapterNumber = next,
+                chapterNumber = current + 1.0,
                 origin = ProgressOrigin.MANUAL,
             )
         }
+    }
+
+    fun toggleFavorite(item: LibraryItem) {
+        viewModelScope.launch {
+            repository.toggleFavorite(item.entry.id, !item.entry.favorite)
+        }
+    }
+
+    suspend fun buildExportJson(): String = repository.exportToJson()
+
+    fun importJson(rawJson: String) {
+        viewModelScope.launch {
+            runCatching {
+                repository.importFromJson(rawJson)
+            }.onSuccess { importedCount ->
+                _messages.emit("Importação concluída: $importedCount obra(s).")
+            }.onFailure { error ->
+                _messages.emit("Falha ao importar JSON: ${error.message ?: "formato inválido"}")
+            }
+        }
+    }
+
+    fun notifyMessage(text: String) {
+        _messages.tryEmit(text)
     }
 }

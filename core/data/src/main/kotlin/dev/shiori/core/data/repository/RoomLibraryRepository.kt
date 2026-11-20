@@ -19,6 +19,7 @@ import dev.shiori.core.domain.model.ProgressOrigin
 import dev.shiori.core.domain.model.ReadingModePreference
 import dev.shiori.core.domain.model.ReadingProgress
 import dev.shiori.core.domain.model.ReadingStatus
+import dev.shiori.core.domain.model.UpdateLibraryItemInput
 import dev.shiori.core.domain.model.Work
 import dev.shiori.core.domain.model.WorkFormat
 import dev.shiori.core.domain.repository.LibraryRepository
@@ -66,6 +67,25 @@ class RoomLibraryRepository @Inject constructor(
             }
         }
     }
+
+    override fun observeLibraryItem(entryId: String): Flow<LibraryItem?> =
+        combine(
+            dao.observeEntryById(entryId),
+            dao.observeActiveWorks(),
+            dao.observeActiveEditions(),
+            dao.observeActiveProgress(),
+        ) { entry, works, editions, progresses ->
+            if (entry == null) return@combine null
+            val work = works.firstOrNull { it.id == entry.workId } ?: return@combine null
+            val edition = editions.firstOrNull { it.id == entry.editionId } ?: return@combine null
+            val progress = progresses.firstOrNull { it.editionId == entry.editionId }
+            LibraryItem(
+                entry = entry.toDomain(),
+                work = work.toDomain(),
+                edition = edition.toDomain(),
+                progress = progress?.toDomain(),
+            )
+        }
 
     override suspend fun getLibraryItem(entryId: String): LibraryItem? {
         val entry = dao.getEntryById(entryId) ?: return null
@@ -151,7 +171,7 @@ class RoomLibraryRepository @Inject constructor(
             deletedAtUtc = null,
         )
 
-        dao.insertNewLibraryItem(workEntity, editionEntity, entryEntity, progressEntity)
+        dao.upsertLibraryAggregate(workEntity, editionEntity, entryEntity, progressEntity)
 
         return LibraryItem(
             entry = entryEntity.toDomain(),
@@ -159,6 +179,71 @@ class RoomLibraryRepository @Inject constructor(
             edition = editionEntity.toDomain(),
             progress = progressEntity.toDomain(),
         )
+    }
+
+    override suspend fun updateEntryDetails(input: UpdateLibraryItemInput) {
+        val entry = dao.getEntryById(input.entryId) ?: return
+        val work = dao.getWorkById(entry.workId) ?: return
+        val edition = dao.getEditionById(entry.editionId) ?: return
+        val existingProgress = dao.getProgressByEditionId(entry.editionId)
+        val now = Instant.now().toString()
+
+        val updatedWork = work.copy(
+            title = input.title.trim(),
+            originalTitle = input.originalTitle?.trim()?.takeIf { it.isNotEmpty() },
+            format = input.format.name,
+            synopsis = input.synopsis?.trim()?.takeIf { it.isNotEmpty() },
+            tagsJson = listJson.encodeToString(input.tags.map { it.trim() }.filter { it.isNotEmpty() }.distinct()),
+            updatedAtUtc = now,
+            revision = work.revision + 1L,
+        )
+        val updatedEdition = edition.copy(
+            language = input.language.trim().ifEmpty { "pt-BR" },
+            label = input.editionLabel.trim().ifEmpty { "Default" },
+            totalChapters = input.totalChapters,
+            updatedAtUtc = now,
+            revision = edition.revision + 1L,
+        )
+        val updatedEntry = entry.copy(
+            status = input.status.name,
+            favorite = input.favorite,
+            notes = input.notes.trim(),
+            preferredReadingMode = input.preferredReadingMode.name,
+            updatedAtUtc = now,
+            revision = entry.revision + 1L,
+        )
+        val updatedProgress = if (existingProgress != null) {
+            existingProgress.copy(
+                chapterNumber = input.chapterNumber.coerceAtLeast(0.0),
+                positionMarker = input.positionMarker?.trim()?.takeIf { it.isNotEmpty() },
+                sourceUrl = input.sourceUrl?.trim()?.takeIf { it.isNotEmpty() },
+                origin = ProgressOrigin.MANUAL.name,
+                lastReadAtUtc = now,
+                updatedAtUtc = now,
+                revision = existingProgress.revision + 1L,
+            )
+        } else {
+            ReadingProgressEntity(
+                id = UUID.randomUUID().toString(),
+                editionId = edition.id,
+                sourceWorkId = null,
+                chapterExternalId = null,
+                chapterNumber = input.chapterNumber.coerceAtLeast(0.0),
+                positionMarker = input.positionMarker?.trim()?.takeIf { it.isNotEmpty() },
+                sourceUrl = input.sourceUrl?.trim()?.takeIf { it.isNotEmpty() },
+                origin = ProgressOrigin.MANUAL.name,
+                lastReadAtUtc = now,
+                updatedAtUtc = now,
+                revision = 1L,
+                deletedAtUtc = null,
+            )
+        }
+
+        dao.upsertLibraryAggregate(updatedWork, updatedEdition, updatedEntry, updatedProgress)
+    }
+
+    override suspend fun toggleFavorite(entryId: String, favorite: Boolean) {
+        dao.updateEntryFavorite(entryId, favorite, Instant.now().toString())
     }
 
     override suspend fun updateProgress(
@@ -173,7 +258,7 @@ class RoomLibraryRepository @Inject constructor(
         val updated = if (existing != null) {
             existing.copy(
                 chapterNumber = chapterNumber.coerceAtLeast(0.0),
-                positionMarker = positionMarker?.trim()?.takeIf { it.isNotEmpty() },
+                positionMarker = positionMarker?.trim()?.takeIf { it.isNotEmpty() } ?: existing.positionMarker,
                 sourceUrl = sourceUrl?.trim()?.takeIf { it.isNotEmpty() } ?: existing.sourceUrl,
                 origin = origin.name,
                 lastReadAtUtc = now,
