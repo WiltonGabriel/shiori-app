@@ -1,18 +1,30 @@
-# Environment
+# Gradle & Android build artifacts
+.gradle/
+build/
+*/build/
+*/*/build/
+captures/
+.navigation/
+output/
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+*.jks
+*.keystore
+
+# Local configuration & Android Studio
+local.properties
+.idea/
+*.iml
+.cxx/
+.externalNativeBuild/
+
+# Environment & secrets
 .env
 .env.*
 !.env.example
-
-# Dependencies & builds
-node_modules/
-dist/
-build/
-out/
-target/
-.expo/
-.turbo/
-.cache/
-coverage/
 
 # Local databases & logs
 *.db
@@ -21,14 +33,9 @@ coverage/
 *.sqlite
 *.sqlite3
 *.log
-npm-debug.log*
-pnpm-debug.log*
-yarn-debug.log*
 
-# OS & editors
+# OS
 .DS_Store
 Thumbs.db
 *.swp
 *~
-.idea/
-.vscode/
